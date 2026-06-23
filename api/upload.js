@@ -1,5 +1,14 @@
 import FormData from 'form-data';
 
+// Helper function to manually read the raw body stream from the request
+async function readRequestBody(req) {
+    const chunks = [];
+    for await (const chunk of req) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    }
+    return Buffer.concat(chunks).toString('utf-8');
+}
+
 export default async function handler(req, res) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
@@ -14,27 +23,25 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: 'Server missing API configuration.' });
         }
 
-        // --- FIX IS HERE ---
-        // If Vercel didn't parse req.body automatically, we check if it's a string and parse it manually.
-        let body = req.body;
-        if (typeof req.body === 'string') {
-            try {
-                body = JSON.parse(req.body);
-            } catch (e) {
-                console.error("Failed to parse body string:", e);
-            }
-        }
-
-        // Fallback to an empty object if body is still null/undefined
-        const { image } = body || {};
+        // Manually read the raw text stream sent from the frontend
+        const rawBody = await readRequestBody(req);
         
-        if (!image) {
-            return res.status(400).json({ error: 'No image data received in request body' });
+        if (!rawBody) {
+            return res.status(400).json({ error: 'Empty request body received.' });
         }
-        // --------------------
 
+        // Manually parse the text into a JSON object
+        const parsedBody = JSON.parse(rawBody);
+        const { image } = parsedBody;
+
+        if (!image) {
+            return res.status(400).json({ error: 'No image data key found in payload.' });
+        }
+
+        // Clean up the base64 string and turn it into a binary buffer
         const base64Buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
 
+        // Package data for Telegram
         const telegramForm = new FormData();
         telegramForm.append('chat_id', CHAT_ID);
         telegramForm.append('photo', base64Buffer, {
