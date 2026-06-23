@@ -1,7 +1,7 @@
 import FormData from 'form-data';
 
-// Helper function to manually read the raw body stream from the request
-async function readRequestBody(req) {
+// Helper to collect plain text stream
+async function readTextBody(req) {
     const chunks = [];
     for await (const chunk of req) {
         chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
@@ -19,29 +19,20 @@ export default async function handler(req, res) {
         const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
         if (!BOT_TOKEN || !CHAT_ID) {
-            console.error("Missing Env Variables!");
             return res.status(500).json({ error: 'Server missing API configuration.' });
         }
 
-        // Manually read the raw text stream sent from the frontend
-        const rawBody = await readRequestBody(req);
+        // Read the raw base64 text string directly
+        const base64Data = await readTextBody(req);
         
-        if (!rawBody) {
-            return res.status(400).json({ error: 'Empty request body received.' });
+        if (!base64Data || !base64Data.includes('base64,')) {
+            return res.status(400).json({ error: 'Invalid or missing image stream data' });
         }
 
-        // Manually parse the text into a JSON object
-        const parsedBody = JSON.parse(rawBody);
-        const { image } = parsedBody;
+        // Convert string directly to buffer
+        const cleanBase64 = base64Data.split('base64,')[1];
+        const base64Buffer = Buffer.from(cleanBase64, 'base64');
 
-        if (!image) {
-            return res.status(400).json({ error: 'No image data key found in payload.' });
-        }
-
-        // Clean up the base64 string and turn it into a binary buffer
-        const base64Buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
-
-        // Package data for Telegram
         const telegramForm = new FormData();
         telegramForm.append('chat_id', CHAT_ID);
         telegramForm.append('photo', base64Buffer, {
@@ -49,9 +40,7 @@ export default async function handler(req, res) {
             contentType: 'image/jpeg'
         });
 
-        const telegramUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
-        
-        const telegramResponse = await fetch(telegramUrl, {
+        const telegramResponse = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             body: telegramForm,
             headers: telegramForm.getHeaders()
@@ -62,12 +51,10 @@ export default async function handler(req, res) {
         if (telegramResult.ok) {
             return res.status(200).json({ success: true });
         } else {
-            console.error("Telegram API rejected photo:", telegramResult);
             return res.status(500).json({ error: telegramResult.description || 'Telegram rejected photo' });
         }
 
     } catch (error) {
-        console.error("CRITICAL BACKEND ERROR:", error);
         return res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
 }
