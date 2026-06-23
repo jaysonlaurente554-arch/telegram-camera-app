@@ -1,7 +1,6 @@
 import FormData from 'form-data';
 
 export default async function handler(req, res) {
-    // 1. Guard against non-POST requests
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method Not Allowed' });
     }
@@ -10,22 +9,32 @@ export default async function handler(req, res) {
         const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
         const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-        // 2. Guard against missing environment variables
         if (!BOT_TOKEN || !CHAT_ID) {
             console.error("Missing Env Variables!");
             return res.status(500).json({ error: 'Server missing API configuration.' });
         }
 
-        // 3. Extract the base64 string from the parsed JSON body
-        const { image } = req.body || {};
+        // --- FIX IS HERE ---
+        // If Vercel didn't parse req.body automatically, we check if it's a string and parse it manually.
+        let body = req.body;
+        if (typeof req.body === 'string') {
+            try {
+                body = JSON.parse(req.body);
+            } catch (e) {
+                console.error("Failed to parse body string:", e);
+            }
+        }
+
+        // Fallback to an empty object if body is still null/undefined
+        const { image } = body || {};
+        
         if (!image) {
             return res.status(400).json({ error: 'No image data received in request body' });
         }
+        // --------------------
 
-        // 4. Convert base64 data back into a binary buffer for Telegram
         const base64Buffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
 
-        // 5. Construct the multipart payload for Telegram
         const telegramForm = new FormData();
         telegramForm.append('chat_id', CHAT_ID);
         telegramForm.append('photo', base64Buffer, {
@@ -35,7 +44,6 @@ export default async function handler(req, res) {
 
         const telegramUrl = `https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`;
         
-        // 6. Send to Telegram using native fetch
         const telegramResponse = await fetch(telegramUrl, {
             method: 'POST',
             body: telegramForm,
@@ -52,7 +60,6 @@ export default async function handler(req, res) {
         }
 
     } catch (error) {
-        // This catches any runtime crashes and logs them safely
         console.error("CRITICAL BACKEND ERROR:", error);
         return res.status(500).json({ error: error.message || 'Internal Server Error' });
     }
