@@ -26,7 +26,7 @@ async function sendImageToBackend(base64String) {
     statusText.innerText = "Sending to Telegram...";
 
     try {
-        const response = await fetch('/api/upload', {
+        const response = await fetch('/api/send', {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain' }, // Sending raw text
             body: base64String 
