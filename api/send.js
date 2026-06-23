@@ -1,17 +1,18 @@
 import FormData from 'form-data';
 
-// Helper to collect plain text stream
-async function readTextBody(req) {
-    const chunks = [];
-    for await (const chunk of req) {
-        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-    }
-    return Buffer.concat(chunks).toString('utf-8');
-}
+// This single line tells Vercel to use the modern Web Edge/Serverless runtime,
+// allowing us to use standard methods like req.text() instead of raw streams.
+export const config = {
+    runtime: 'edge',
+};
 
-export default async function handler(req, res) {
+export default async function handler(req) {
+    // Only allow POST requests
     if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method Not Allowed' });
+        return new Response(JSON.stringify({ error: 'Method Not Allowed' }), {
+            status: 405,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     try {
@@ -19,42 +20,51 @@ export default async function handler(req, res) {
         const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
         if (!BOT_TOKEN || !CHAT_ID) {
-            return res.status(500).json({ error: 'Server missing API configuration.' });
+            return new Response(JSON.stringify({ error: 'Server missing API configuration.' }), { status: 500 });
         }
 
-        // Read the raw base64 text string directly
-        const base64Data = await readTextBody(req);
+        // Clean, native way to read the plain text payload without manual stream parsing
+        const base64Data = await req.text();
         
         if (!base64Data || !base64Data.includes('base64,')) {
-            return res.status(400).json({ error: 'Invalid or missing image stream data' });
+            return new Response(JSON.stringify({ error: 'Invalid or missing image stream data' }), { status: 400 });
         }
 
-        // Convert string directly to buffer
+        // Extract the pure base64 characters
         const cleanBase64 = base64Data.split('base64,')[1];
-        const base64Buffer = Buffer.from(cleanBase64, 'base64');
+        
+        // Convert base64 string to a binary blob for the Telegram payload
+        const byteCharacters = atob(cleanBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const imageBlob = new Blob([byteArray], { type: 'image/jpeg' });
 
-        const telegramForm = new FormData();
+        // Package data for Telegram using standard FormData
+        const telegramForm = new globalThis.FormData();
         telegramForm.append('chat_id', CHAT_ID);
-        telegramForm.append('photo', base64Buffer, {
-            filename: 'capture.jpg',
-            contentType: 'image/jpeg'
-        });
+        telegramForm.append('photo', imageBlob, 'capture.jpg');
 
+        // Send to Telegram using global fetch
         const telegramResponse = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
-            body: telegramForm,
-            headers: telegramForm.getHeaders()
+            body: telegramForm
         });
 
         const telegramResult = await telegramResponse.json();
 
         if (telegramResult.ok) {
-            return res.status(200).json({ success: true });
+            return new Response(JSON.stringify({ success: true }), {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' }
+            });
         } else {
-            return res.status(500).json({ error: telegramResult.description || 'Telegram rejected photo' });
+            return new Response(JSON.stringify({ error: telegramResult.description || 'Telegram rejected photo' }), { status: 500 });
         }
 
     } catch (error) {
-        return res.status(500).json({ error: error.message || 'Internal Server Error' });
+        return new Response(JSON.stringify({ error: error.message || 'Internal Server Error' }), { status: 500 });
     }
 }
